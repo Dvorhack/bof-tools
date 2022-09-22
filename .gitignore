@@ -1,4 +1,3 @@
-vuln_bin/*
-!vuln_bin/.gitkeep
+bin/*
 
 core*
