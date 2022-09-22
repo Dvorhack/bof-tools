@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g -no-pie -fno-stack-protector -z execstack
+CFLAGS = -g -no-pie -fno-stack-protector -z execstack -m32
 
 SRC_DIR=src
 BIN_DIR=bin
@@ -14,7 +14,7 @@ $(BIN_DIR)/%: $(SRC_DIR)/%.c
 	$(CC) -o $@ $^ $(CFLAGS) 
 
 dossier:
-	mkdir $(BIN_DIR)
+	mkdir -p $(BIN_DIR)
 
 
 clean:

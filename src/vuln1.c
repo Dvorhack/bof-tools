@@ -1,7 +1,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-int main(){
+void vuln(){
     char buffer[10];
     gets(buffer);
+}
+
+int main(){
+    vuln();
 }

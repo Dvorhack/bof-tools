@@ -1,6 +1,6 @@
 from pwn import *
 
-BIN_DIR = "./vuln_bin/"
+BIN_DIR = "./bin/"
 
 elf = ELF(BIN_DIR+"vuln1")
 
