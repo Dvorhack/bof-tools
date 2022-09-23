@@ -1,5 +1,6 @@
 CC = gcc
-CFLAGS = -g -no-pie -fno-stack-protector -z execstack -m32
+CFLAGS = -g -no-pie -fno-stack-protector -z execstack
+IF_32 = -m32
 
 SRC_DIR=src
 BIN_DIR=bin
@@ -9,6 +10,12 @@ OBJECTS := $(patsubst $(SRC_DIR)/%.c, $(BIN_DIR)/%, $(SOURCES))
 
 all: dossier $(OBJECTS)
 
+64: dossier $(OBJECTS)
+
+32: is_32 dossier $(OBJECTS)
+
+is_32: 
+	$(eval CFLAGS := $(CFLAGS) $(IF_32))
 
 $(BIN_DIR)/%: $(SRC_DIR)/%.c
 	$(CC) -o $@ $^ $(CFLAGS) 

